@@ -1,5 +1,69 @@
 import flet as ft
 import webbrowser
+import sqlite3
+import random
+import string
+
+
+def init_db():
+    conn = sqlite3.connect("xenon_users.db")
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            google_id TEXT UNIQUE,
+            xenon_id TEXT UNIQUE,
+            name TEXT,
+            email TEXT,
+            balance REAL DEFAULT 0.0,
+            join_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+def generate_xenon_id():
+    """Генерирует ID формата XN-1234-ABCD"""
+    nums = ''.join(random.choices(string.digits, k=4))
+    letters = ''.join(random.choices(string.ascii_uppercase, k=4))
+    return f"XN-{nums}-{letters}"
+
+
+def register_or_get_user(google_id, name, email):
+    conn = sqlite3.connect("xenon_users.db")
+    cursor = conn.cursor()
+
+    # Проверяем, существует ли юзер
+    cursor.execute("SELECT xenon_id FROM users WHERE google_id = ?", (google_id,))
+    result = cursor.fetchone()
+
+    if result:
+        x_id = result[0]
+    else:
+        # Регистрация нового
+        x_id = generate_xenon_id()
+        cursor.execute(
+            "INSERT INTO users (google_id, xenon_id, name, email) VALUES (?, ?, ?, ?)",
+            (google_id, x_id, name, email)
+        )
+        conn.commit()
+
+    conn.close()
+    return x_id
+
+
+# Вызываем инициализацию при запуске
+init_db()
+
+def get_all_users():
+    conn = sqlite3.connect("xenon_users.db")
+    cursor = conn.cursor()
+    # Явно указываем порядок: 0:id, 1:google_id, 2:xenon_id, 3:name, 4:email, 5:balance
+    cursor.execute("SELECT id, google_id, xenon_id, name, email, balance FROM users")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 # ══════════════════════════════════════════
 #  COLORS
@@ -126,7 +190,7 @@ def section_head(left, right):
 
 
 def accent_btn(label, on_click=None, icon=None):
-    return ft.ElevatedButton(
+    return ft.Button(
         content=ft.Text(label, weight=ft.FontWeight.W_700, size=14),
         icon=icon,
         on_click=on_click,
@@ -153,8 +217,16 @@ def ghost_btn(label, on_click=None):
 # ══════════════════════════════════════════
 #  HEADER
 # ══════════════════════════════════════════
-def build_header(page, scroll_to):
+def build_header(page, scroll_to, is_admin=False):
     nav_labels = ["Главная", "О нас", "Функции", "Скачать", "FAQ"]
+
+    # Исправлено имя переменной: admin_button
+    admin_button = ft.TextButton(
+        "📊 БД",
+        on_click=lambda _: open_admin_panel(page),
+        style=ft.ButtonStyle(color=GOLD)
+    ) if is_admin else ft.Container()
+
     nav = ft.Row(
         [ft.TextButton(
             n,
@@ -166,10 +238,14 @@ def build_header(page, scroll_to):
         ) for n in nav_labels],
         spacing=0,
     )
+
     return ft.Container(
         content=ft.Row(
-            [xenon_logo(22), nav,
-             accent_btn("Скачать", on_click=lambda e: scroll_to("Скачать"))],
+            [
+                ft.Row([xenon_logo(22), admin_button], spacing=10),
+                nav,
+                accent_btn("Скачать", on_click=lambda e: scroll_to("Скачать"))
+            ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         ),
@@ -656,6 +732,66 @@ def build_footer(page: ft.Page):
     )
 
 
+def open_admin_panel(page: ft.Page):
+    admin_dialog = ft.AlertDialog(
+        # Убираем стандартные ограничения ширины
+        title=ft.Text("УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ XENON AI"),
+        # Заставляем контент занимать максимум места
+        content=ft.Container(
+            content=build_admin_table(),
+            width=page.width,  # Берем текущую ширину окна браузера
+            height=page.height,  # Берем текущую высоту
+        ),
+        actions=[
+            ft.TextButton("Закрыть панель", on_click=lambda _: close_dialog(page, admin_dialog))
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+
+    page.overlay.append(admin_dialog)
+    admin_dialog.open = True
+    page.update()
+
+
+def close_dialog(page, dialog):
+    dialog.open = False
+    page.update()
+def build_admin_table():
+    try:
+        users = get_all_users()
+        if not users:
+            return ft.Container(
+                content=ft.Text("База данных пуста", color=MUTED),
+                padding=20
+            )
+
+        return ft.DataTable(
+            border=ft.Border.all(1, BORDER),
+            border_radius=10,
+            column_spacing=50,  # Увеличиваем расстояние между колонками
+            columns=[
+                ft.DataColumn(ft.Text("XENON ID", color=ACCENT, weight="bold")),
+                ft.DataColumn(ft.Text("Имя")),
+                ft.DataColumn(ft.Text("Полный Email", weight="bold")), # Теперь будет виден полностью
+                ft.DataColumn(ft.Text("Баланс", color=GOLD)),
+            ],
+            rows=[
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(str(u[2]), selectable=True)), # xenon_id
+                        ft.DataCell(ft.Text(str(u[3]))), # name
+                        ft.DataCell(
+                            # selectable=True позволит тебе копировать почту мышкой
+                            ft.Text(str(u[4]), color=ACCENT, selectable=True)
+                        ),
+                        ft.DataCell(ft.Text(f"{u[5]} $", weight="bold")), # balance
+                    ]
+                ) for u in users
+            ],
+        )
+    except Exception as ex:
+        return ft.Text(f"Ошибка таблицы: {ex}", color=DANGER)
+
 # ══════════════════════════════════════════
 #  MAIN
 # ══════════════════════════════════════════
@@ -691,7 +827,22 @@ async def main(page: ft.Page):
 
     # --- ФУНКЦИЯ ПЕРЕКЛЮЧЕНИЯ (АВТОРИЗАЦИЯ) ---
     async def login_click(e):
-        if login_field.value and pass_field.value:
+        ADMIN_LOGIN = "admin"
+        ADMIN_PASS = "xenon2026"
+
+        if login_field.value == ADMIN_LOGIN and pass_field.value == ADMIN_PASS:
+            # 1. Перерисовываем хедер с кнопкой админа
+            main_view.controls[0] = build_header(page, lambda n: page.run_task(scroll_to, n), is_admin=True)
+
+            # 2. Переходим на главную
+            reg_view.visible = False
+            main_view.visible = True
+
+            page.snack_bar = ft.SnackBar(ft.Text("Режим администратора активирован"), bgcolor=GOLD, open=True)
+            page.update()
+
+        elif login_field.value and pass_field.value:
+            # Обычный вход для пользователей
             login_btn.disabled = True
             login_btn.content = ft.ProgressRing(width=16, height=16, stroke_width=2, color="black")
             page.update()
@@ -707,27 +858,103 @@ async def main(page: ft.Page):
 
     login_btn = accent_btn("Войти в XENON", on_click=login_click)
 
-    # --- ОКНО РЕГИСТРАЦИИ (БЛОК 1) ---
+    # --- ОКНО АВТОРИЗАЦИИ XENON ID (ОБНОВЛЕННЫЙ БЛОК) ---
+    # --- ОБНОВЛЕННАЯ ФУНКЦИЯ GOOGLE CLICK ---
+    # --- ФУНКЦИЯ ВХОДА ЧЕРЕЗ GOOGLE ---
+    async def google_click(e):
+        provider = ft.auth.GoogleOAuthProvider(
+            client_id="244248900642-smf1qvkb6fpij809a2l1cgm95l99n50n.apps.googleusercontent.com",
+            client_secret="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",
+            redirect_url="http://localhost:8550/api/oauth/redirect"
+        )
+
+        # 2. Запускаем процесс логина (откроется браузер)
+        await page.login(provider)
+
+    # Функция, которая сработает ПОСЛЕ того, как ты выберешь аккаунт в браузере
+    async def on_login(e):
+        if e.error:
+            print(f"Ошибка входа: {e.error}")
+            return
+
+        # 3. Достаем реальные данные из Google-аккаунта
+        user_data = page.auth.user
+        real_google_id = user_data.get("id")
+        real_name = user_data.get("name")
+        real_email = user_data.get("email")
+
+        # 4. Сохраняем в нашу базу
+        x_id = register_or_get_user(real_google_id, real_name, real_email)
+
+        # 5. Пускаем в интерфейс
+        reg_view.visible = False
+        main_view.visible = True
+        page.title = f"XENON AI — Привет, {real_name}!"
+        page.update()
+
+    # Привязываем событие завершения входа к странице
+    page.on_login = on_login
     reg_view = ft.Container(
-        content=ft.Container(
-            content=ft.Column([
-                ft.Container(height=100),
-                xenon_logo(48),
-                ft.Text("SYSTEM ACCESS REQUIRED", color=MUTED, size=12, weight=ft.FontWeight.W_600),
-                ft.Container(height=20),
-                card_box(ft.Column([
-                    login_field,
-                    pass_field,
-                    ft.Container(height=10),
-                    login_btn,
-                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER), padding=30),
-                ft.TextButton("Запросить доступ у администратора", style=ft.ButtonStyle(color=MUTED)),
-            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            width=400,
-        ),
         expand=True,
         alignment=ft.Alignment(0, 0),
-        visible=True
+        visible=True,
+        bgcolor=BG,
+        content=ft.Stack([
+            # 1. СИНЯЯ РАМКА (Карточка)
+            ft.Container(
+                width=400,
+                height=500,
+                bgcolor=CARD,
+                border_radius=20,
+                border=ft.Border.all(1, BORDER),
+                padding=ft.Padding(30, 90, 30, 30),  # Отступ сверху 65 под логотип
+                margin=ft.Margin(0, 20, 0, 0),  # Сдвиг рамки вниз
+                content=ft.Column([
+                    ft.Text("SYSTEM ACCESS REQUIRED", color=MUTED, size=11, weight=ft.FontWeight.W_600),
+                    ft.Text("ID SYSTEM", size=14, weight="bold", color=ACCENT, font_family="Orbitron"),
+                    ft.Divider(color=BORDER, height=20),
+
+                    login_field,
+                    pass_field,
+
+                    ft.Container(height=5),
+
+                    # Кнопка обычного входа
+                    ft.Container(content=login_btn, width=340),
+
+                    ft.Text("ИЛИ", size=10, color=MUTED, weight="bold"),
+
+                    # Кнопка Google
+                    ft.Container(
+                        content=ft.Row([
+                            ft.Image(src="https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_\"G\"_Logo.svg",
+                                     width=20),
+                            ft.Text("Войти через Google", color=BG, weight="bold")
+                        ], alignment="center"),
+                        bgcolor=TEXT,
+                        width=340,
+                        height=35,
+                        border_radius=10,
+                        on_click=google_click,
+                    ),
+
+                    ft.TextButton(
+                        "Запросить доступ у администратора",
+                        style=ft.ButtonStyle(color=MUTED),
+                        on_click=lambda _: print("Запрос...")
+                    ),
+                ], horizontal_alignment="center", spacing=12)
+            ),
+
+            # 2. ПАРЯЩЕЕ НАЗВАНИЕ (Логотип поверх рамки)
+            ft.Container(
+                content=xenon_logo(54),
+                top=15,
+                left=0,
+                right=0,
+                alignment=ft.Alignment(0, 0)
+            ),
+        ], width=400, height=610)
     )
 
     # --- КОНТЕНТ САЙТА (БЛОК 2) ---
@@ -787,6 +1014,7 @@ async def main(page: ft.Page):
     page.add(reg_view, main_view)
 
 
-# Запуск
 if __name__ == "__main__":
-    ft.run(main)
+    init_db()
+    # Запускаем в режиме веб-браузера на порту 8550
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
