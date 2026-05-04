@@ -1015,6 +1015,6 @@ async def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    init_db()
-    # Запускаем в режиме веб-браузера на порту 8550
-    ft.app(target=main, view=ft.AppView.WEB_BROWSER, port=8550)
+    import os
+    # Порт 8000 — стандарт для Render, host "0.0.0.0" делает сайт доступным в сети
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
