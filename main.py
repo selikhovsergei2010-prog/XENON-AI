@@ -787,6 +787,7 @@ async def main(page: ft.Page):
     page.add(reg_view, main_view)
 
 
-# Запуск
 if __name__ == "__main__":
-    ft.run(main)
+    import os
+    # Порт 8000 — стандарт для Render, host "0.0.0.0" делает сайт доступным в сети
+    ft.app(target=main, view=ft.AppView.WEB_BROWSER, host="0.0.0.0", port=int(os.getenv("PORT", 8000)))
